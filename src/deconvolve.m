@@ -12,5 +12,5 @@ function Image = deconvolve(Image)
 % Usage:
 %     Image = deconvolve(Image);
 % 
-    Image = deconvlucy(Image, fspecial('gaussian', 7, 1.2));
+    Image = deconvlucy(Image, fspecial('gaussian', 4, 4));
 end

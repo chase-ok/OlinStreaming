@@ -14,7 +14,7 @@ classdef ImageSeries < handle
     end
     
     properties (Constant)
-        TRACKING_PY_PATH = '..\code\tracking\python\tracking.py';
+        TRACKING_PY_PATH = '/home/ckernan/dev/OlinStreaming/src/python/tracking.py';
     end
     
     methods

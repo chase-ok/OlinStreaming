@@ -20,9 +20,13 @@ function Paths = trackEcoli(Images, debug)
 
     print('Finding bacteria');
     TimeSlices = {}; % Cell vector of particle positions, grouped by time
-    for i = 1:length(Images)
+    for i = 2:(length(Images) - 1)
         print([num2str(round(100*i/length(Images))) '%']);
-        TimeSlices{i} = findEcoliBacteria(Images{i}, i, false);
+        
+        %average images
+        Image = 0.1*Images{i-1} + 0.8*Images{i} + 0.1*Images{i};
+        
+        TimeSlices{i-1} = findEcoliBacteria(Image, i-1, false);
     end
 
     % Format particle positions so that 

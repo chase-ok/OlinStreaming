@@ -37,7 +37,7 @@ class BatchRun(object):
             options = dict(title="Distance Correlation",
                            xlabel="Distance [microns]",
                            ylabel="# Particles [microns^-2]",
-                           ylim=(0, 0.04))
+                           ylim=(0, 0.4))
         elif graph == "velocityCorrelation":
             options = dict(title="Velocity Correlation",
                            xlabel="Distance [microns]",
@@ -52,11 +52,11 @@ class BatchRun(object):
             options = dict(title="Director-Velocity Correlation",
                            xlabel="Distance [microns]",
                            ylabel="Correlation [microns^-2]",
-                           ylim=(0, 0.01))
+                           ylim=(0, 0.02))
         else:
             raise ValueError("Unknown graph: %s." % graph)
         
-        visual.overlayMeanCorrelations(results, **options)        
+        visual.overlayMeanCorrelations(results, show=False, **options)        
     
     def _performAnalysis(self, analysisName, 
                          recalculate=False, 
@@ -72,7 +72,7 @@ class BatchRun(object):
                 results = pickle.load(f)
         
         for info in self.infos:
-            if info in results: 
+            if info.uniqueName in results:
                 continue
             
             if displayProgress:
@@ -89,7 +89,7 @@ class BatchRun(object):
                     print "No tracks found for %s, skipping." % info.uniqueName
                 continue
             
-            results[info] = func(paths)
+            results[info.uniqueName] = func(paths)
         
         with open(filePath, 'wb') as f:
             pickle.dump(results, f)
@@ -98,8 +98,10 @@ class BatchRun(object):
     
     def _organizeByGroup(self, results):
         grouped = dict()
-        for info, result in results.iteritems():
-            grouped.setdefault(info.group, []).append(result)
+        for info in self.infos:
+            name = info.uniqueName
+            if name in results:
+                grouped.setdefault(info.group, []).append(results[name])
         return grouped
     
     def _makeFilePath(self, subfolder, name):
@@ -126,7 +128,8 @@ class BatchRun(object):
 if __name__ == '__main__':
     batch = fromDensities()
     #batch.track(override=False)
-    
+    batch.overlay("directorVelocityCorrelation")
+    plt.show()
     for func in batch.funcs:
         batch.overlay(func)
         visual.saveCurrentPlot(func + ".png")

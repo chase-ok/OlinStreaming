@@ -12,11 +12,12 @@ from streaming.images import *
 from SimpleCV import ImageClass
 from SimpleCV.Features import BlobMaker
 
-def computeForegroundMasks(images, lowThresh=-1.8, highThresh=1.8):
+def computeForegroundMasks(images, lowThresh=-1.8, highThresh=1.3):
     """ Works with grayscale only.
     """
     size = cv.GetSize(images[0])
-    def createImage(): return cv.CreateImage(size, cv.IPL_DEPTH_32F, 1)
+    def createImage(): 
+        return cv.CreateImage(size, cv.IPL_DEPTH_32F, 1)
     
     scratch = createImage()
     
@@ -223,7 +224,7 @@ def trackBacteria(images, debug=False):
     
     ellipses = findEllipses(masks)
     
-    params = mlab.struct("mem", 0, "dim", 2, "good", 2, "quiet", 0)
+    params = mlab.struct("mem", 1, "dim", 2, "good", 2, "quiet", 0)
     matrix = ellipses.selectColumns("x", "y", "angle", "area", "time")
     maxDist = 5
     while maxDist > 0.5:
@@ -260,13 +261,18 @@ def trackBacteria(images, debug=False):
     
     for matrix in velocities: matrix.compact()
     return PathData(images.info, velocities)
-    
+
+def debugForegroundMaskSettings(images, lowThresh=-1.8, highThresh=1.4):
+    simpleImages = SimpleImageSeq(images)
+    masks = computeForegroundMasks(images, lowThresh, highThresh)
+    blobs = findBlobs(simpleImages, SimpleImageSeq(masks))
+    debugBlobs(simpleImages, blobs)
 
 if __name__ == '__main__':
     from streaming import config
     infos = loadSeqInfos(config.densities["max"])
     seq = ImageSeq(infos[0])
-    print seq
+    debugForegroundMaskSettings(seq)
 
     
     

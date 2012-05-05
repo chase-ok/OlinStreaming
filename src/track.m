@@ -195,7 +195,7 @@ t = xyzs(:,dd);
 st = circshift(t,1);
 st = t(2:end) - st(2:end);
 if  sum(st(find(st < 0))) ~= 0
-    disp('The time vectors is not in order')
+    error('The time vectors is not in order')
     return
 end
 info = 1;
@@ -204,7 +204,7 @@ w = find(st > 0);
 z = length(w);
 z = z +1;
 if isempty(w)
-    disp('All positions are at the same time... go back!')
+    error('All positions are at the same time... go back!')
     return
 end
 
@@ -766,7 +766,7 @@ for i=istart:z
                             disp('Warning: difficult combinatorics encountered.')
                         end
                         if rnsteps > 2.e+5
-                            disp(['Excessive Combinitorics you FOOL LOOK WHAT YOU HAVE' ...
+                            error(['Excessive Combinitorics you FOOL LOOK WHAT YOU HAVE' ...
                                     ' DONE TO ME!!!'])
                             return
                         end
@@ -1043,7 +1043,7 @@ if goodenough > 0
         for i=1:10
         disp('You are not going any further, check your params and data')
         end
-        disp('the code broke at line 1045')
+        error('the code broke at line 1045')
         return
     end
     if nkeep < n

@@ -6,6 +6,7 @@ Created on Mar 24, 2012
 
 from matplotlib import pyplot as plt
 from matplotlib import animation
+from streaming import analysis
 import numpy as np
 
 def plot2DField(fields, show=True):
@@ -24,24 +25,24 @@ def plot2DField(fields, show=True):
     if show: plt.show()
     else: return plot
     
-def plotCorrelation(correlations, 
+def plotCorrelation(correlation, 
                     clear=True, 
                     points=True, 
                     show=True, 
                     line='b-', 
-                    label='_nolegend_', 
+                    label='_nolegend_',
+                    alpha=1.0,
                     **options):
     if clear: plt.clf()
     
-    sums = np.zeros_like(correlations[0][1])
-    
-    for dist, corr in correlations:
-        if points: plt.plot(dist, corr, 'k.', markersize=5)
-        sums += corr
+    if points:
+        for x, y in correlation.points:
+            plt.plot(x, y, '.k', markersize=5, label='_nolegend_')
         
-    plt.plot(correlations[0][0], sums/len(correlations), line, 
-             linewidth=2, 
-             label=label)
+    plt.plot(correlation.x, correlation.meanY, line, 
+             linewidth=1, 
+             label=label,
+             alpha=alpha)
     _applyOptions(options)
     
     if show: plt.show()
@@ -58,18 +59,19 @@ def overlayMeanCorrelations(groupedCorrelations,
     plt.hold(True)
     
     for line, (group, correlations) in zip(lines, groupedCorrelations.items()):
-        first = True
         for c in correlations:
-            label = group if first else "_nolegend_"
-            first = False
-            
             plotCorrelation(c, 
                             clear=False, 
                             show=False, 
                             points=False, 
                             line=line,
-                            label=label,
+                            label="_nolegend_",
+                            alpha=0.4,
                             **options)
+        
+        x, mean = analysis.meanOfCorrelations(correlations)
+        plt.plot(x, mean, line, linewidth=3, label=group)
+        _applyOptions(options)
     
     plt.legend()
     if show: plt.show()

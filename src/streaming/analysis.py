@@ -73,11 +73,12 @@ def velocityField(paths):
             
     return _calculateByFrame(paths, calculateFrame)
 
-def particleDistance(paths):
+def particleDistance(paths, **radiusArgs):
     def calculateRadius(m, ref, inRange):
         return inRange.sum()
     
-    return _byRadius(paths, calculateRadius)
+    return Correlation("Particle Distance", paths,
+                       _byRadius(paths, calculateRadius, **radiusArgs))
 
 def velocityCorrelation(paths, **radiusArgs):
     def calculateRadius(m, ref, inRange):
@@ -93,7 +94,8 @@ def velocityCorrelation(paths, **radiusArgs):
         
         return corr/numRows
     
-    return _byRadius(paths, calculateRadius, **radiusArgs)
+    return Correlation("Velocity", paths,
+                       _byRadius(paths, calculateRadius, **radiusArgs))
 
 def directorCorrelation(paths, **radiusArgs):
     def calculateRadius(m, ref, inRange):
@@ -109,7 +111,8 @@ def directorCorrelation(paths, **radiusArgs):
         
         return corr/angles.size
     
-    return _byRadius(paths, calculateRadius, **radiusArgs)
+    return Correlation("Director", paths,
+                       _byRadius(paths, calculateRadius, **radiusArgs))
 
 def directorVelocityCorrelation(paths, **radiusArgs):
     def calculateRadius(m, ref, inRange):
@@ -125,7 +128,38 @@ def directorVelocityCorrelation(paths, **radiusArgs):
         
         return corr/numRows
     
-    return _byRadius(paths, calculateRadius, **radiusArgs)
+    return Correlation("Director-Velocity", paths,
+                       _byRadius(paths, calculateRadius, **radiusArgs))
+
+class Correlation(object):
+    
+    def __init__(self, name, paths, frames):
+        self.info = paths.info
+        self._frames = frames
+        self.name = name
+        
+    @property
+    def x(self):
+        return self._frames[0][0]
+    
+    @property
+    def meanY(self):
+        sums = np.zeros_like(self._frames[0][1])
+        for _, ys in self._frames: sums += ys
+        return sums/len(self._frames)
+    
+    @property
+    def points(self):
+        points = []
+        for xs, ys in self._frames:
+            points.extend(zip(xs, ys))
+        return points
+
+def meanOfCorrelations(correlations):
+    mean = np.zeros_like(correlations[0].x)
+    for c in correlations:
+        mean += c.meanY
+    return correlations[0].x, mean
 
 def _toUnit(vector):
     mag = np.linalg.norm(vector)
@@ -146,21 +180,18 @@ def _makeBins(paths, cellData, shape=(10, 10)):
     return binSize, positions
     
 def _calculateByFrame(paths, func):
-    if isinstance(paths, PathData):
-        return map(func, paths.velocities)
-    else:
-        return func(paths)
+    return map(func, paths.velocities)
 
 def _byRadius(paths, func, 
               radiuses=np.arange(1.0, 15, 1),
               divideArea=True):
-    radiusesSq = radiuses**2
-    
-    def getAreaConstant(x, y, rSq1, rSq2):
-        if divideArea:
-            return math.pi*(rSq2 - rSq1)
-        else:
-            return 1.0
+    if divideArea:
+        circleArea = _createCircleAreaFunc(*paths.info.imageSize)
+        def getAreaConstant(x, y, r1, r2):
+            return circleArea(x, y, r2) - circleArea(x, y, r1)
+    else:
+        def getAreaConstant(x, y, r1, r2):
+            return 1
     
     def calculateFrame(matrix):
         data = np.zeros(len(radiuses))
@@ -169,17 +200,78 @@ def _byRadius(paths, func,
             x, y = matrix[row, ("x", "y")]
             distancesSq = (matrix[:, "x"] - x)**2 + (matrix[:, "y"] - y)**2
             
-            for i in range(len(radiusesSq)):
-                rSq1 = EPSILON if i == 0 else radiusesSq[i - 1]
-                rSq2 = radiusesSq[i]
+            for i in range(len(radiuses)):
+                r1 = EPSILON if i == 0 else radiuses[i - 1]
+                r2 = radiuses[i]
                 
-                particlesInRange = (distancesSq >= rSq1) & (distancesSq <= rSq2)
+                particlesInRange = (distancesSq >= r1**2) & (distancesSq <= r2**2)
                 result = func(matrix, row, particlesInRange)
                 if result:
-                    data[i] += result/getAreaConstant(x, y, rSq1, rSq2)
+                    data[i] += result/getAreaConstant(x, y, r1, r2)
         
         data /= matrix.shape[0]
             
         return radiuses, data
     
     return _calculateByFrame(paths, calculateFrame)
+
+def _createCircleAreaFunc(width, height):
+    table = _constructClippingFuncTable(width, height)
+    cache = {}
+    
+    def calculateArea(x, y, r):
+        roundedX, roundedY = 2*int(x/2), 2*int(y/2)
+        key = roundedX, roundedY, r
+        try:
+            return cache[key]
+        except KeyError:
+            area = table[roundedX - r >= 0, 
+                         roundedX + r <= width, 
+                         roundedY - r >= 0, 
+                         roundedY + r <= height](roundedX, roundedY, r)
+            cache[key] = area
+            return area
+    
+    return calculateArea
+
+
+def _constructClippingFuncTable(width, height):
+    def noClipping(x, y, r): 
+        return r**2
+    
+    def singleSideClipping(transform):
+        def func(x, y, r):
+            x = abs(transform(x, y))
+            return x*math.sqrt(r**2 - x**2) + r**2*(math.pi/2 + math.asin(x/r))
+        return func
+    
+    def cornerClipping(transform):
+        def func(x, y, r):
+            x, y = transform(x, y)
+            x2, y2, r2 = x**2, y**2, r**2
+            
+            if x2 + y2 < r2:
+                xIntercept = x + math.sqrt(r2 - y2)
+                yIntercept = y + math.sqrt(r2 - x2)
+                angle = 2*math.asin(math.sqrt(xIntercept*yIntercept)/(2*r))
+                triangle = 0.5*xIntercept*yIntercept
+                chord = 0.5*r2*(angle - math.sin(angle))
+                return triangle + chord
+            else:
+                return x*math.sqrt(r2 - x2) + y*math.sqrt(r2 - y2) + \
+                       r2*(math.asin(x/r) + math.asin(y/r))
+    
+    # (left, right, top, bottom)
+    b = lambda s: tuple(c == "1" for c in s)
+    return {b("1111"): noClipping,
+            b("0111"): singleSideClipping(lambda x, y: x),
+            b("1011"): singleSideClipping(lambda x, y: width - x),
+            b("1101"): singleSideClipping(lambda x, y: y),
+            b("1110"): singleSideClipping(lambda x, y: height - y),
+            b("0101"): cornerClipping(lambda x, y: (x, y)),
+            b("0110"): cornerClipping(lambda x, y: (x, height - y)),
+            b("1001"): cornerClipping(lambda x, y: (width - x, y)),
+            b("1010"): cornerClipping(lambda x, y: (width - x, height - y))}
+
+    
+    

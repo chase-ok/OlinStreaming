@@ -3,8 +3,10 @@
 from streaming import analysis, images, processing, visual, config
 from matplotlib import pyplot as plt
 import os
+import numpy as np
 import pickle
 from os import path
+from multiprocessing import Manager, Lock, Pool
 
 def fromDensities(**args):
     infos = []
@@ -12,22 +14,30 @@ def fromDensities(**args):
         infos.extend(images.loadSeqInfos(folder, group=density))
     return BatchRun(infos, **args)
 
+ANALYSIS_FUNCTIONS = \
+    dict(particleDistance=analysis.particleDistance,
+         velocityCorrelation=analysis.velocityCorrelation,
+         directorCorrelation=analysis.directorCorrelation,
+         directorVelocityCorrelation=analysis.directorVelocityCorrelation)
+
 class BatchRun(object):
     
-    funcs = dict(particleDistance=analysis.particleDistance,
-                 velocityCorrelation=analysis.velocityCorrelation,
-                 directorCorrelation=analysis.directorCorrelation,
-                 directorVelocityCorrelation=analysis.directorVelocityCorrelation,
-                )
+    funcs = ANALYSIS_FUNCTIONS
     
-    def __init__(self, infos, outputFolder="../../output", minLength=50):
+    def __init__(self, infos, 
+                 outputFolder="../../output", 
+                 minLength=50, 
+                 poolSize=4):
         self.infos = infos
         self.outputFolder = outputFolder
         self.minLength = 50
+        self.poolSize = 4
     
     def track(self, override=True):
-        for info in self.infos:
-            self._trackSeq(images.ImageSeq(info), override)
+        pool = Pool(self.poolSize)
+        tasks = ((info, self._getPathsFile(info), override) 
+                  for info in self.infos)
+        pool.map(_trackSeq, tasks)
             
     def overlay(self, graph, **analysisOptions):
         results = self._performAnalysis(graph, **analysisOptions)
@@ -42,55 +52,58 @@ class BatchRun(object):
             options = dict(title="Velocity Correlation",
                            xlabel="Distance [microns]",
                            ylabel="Correlation [microns^-2]",
-                           ylim=(-0.001, 0.02))
+                           ylim=(-0.001, 0.03))
         elif graph == "directorCorrelation":
             options = dict(title="Director Correlation",
                            xlabel="Distance [microns]",
                            ylabel="Correlation [microns^-2]",
-                           ylim=(0, 0.02))
+                           ylim=(0, 0.03))
         elif graph == "directorVelocityCorrelation":
             options = dict(title="Director-Velocity Correlation",
                            xlabel="Distance [microns]",
                            ylabel="Correlation [microns^-2]",
-                           ylim=(0, 0.02))
+                           ylim=(0, 0.03))
         else:
             raise ValueError("Unknown graph: %s." % graph)
         
-        visual.overlayMeanCorrelations(results, show=False, **options)        
+        visual.overlayMeanCorrelations(results, show=False, **options)      
     
     def _performAnalysis(self, analysisName, 
                          recalculate=False, 
                          skipMissing=True,
-                         displayProgress=True):
+                         radiuses=np.arange(0.5, 15, 0.5)):
         filePath = self._makeFilePath("analysis", analysisName + ".cache")
-        func = self.funcs[analysisName]
         
-        if recalculate or not path.exists(filePath):
-            results = {}
-        else:
+        #pool = Pool(self.poolSize)
+        #manager = Manager()
+        #results = manager.dict()
+        results = dict()
+        
+        if not recalculate and path.exists(filePath):
             with open(filePath, 'rb') as f:
-                results = pickle.load(f)
-        
-        for info in self.infos:
-            if info.uniqueName in results:
-                continue
-            
-            if displayProgress:
-                print "Analyzing " + info.uniqueName
-            
-            try:
-                paths = self._loadPaths(info)
-            except:
-                if not skipMissing:
-                    raise ValueError("Cannot find tracks for %s!"
-                                     % info.uniqueName)
+                existingResults = pickle.load(f)
+                results.update(existingResults)
                 
-                if displayProgress:
+        def tasks():
+            for info in self.infos:
+                if info.uniqueName in results: continue
+                print "Analyzing " + info.uniqueName
+                
+                pathsFile = self._getPathsFile(info)
+                if not path.exists(pathsFile):
+                    if not skipMissing:
+                        raise ValueError("Cannot find tracks for %s!"
+                                         % info.uniqueName)
+                    
                     print "No tracks found for %s, skipping." % info.uniqueName
-                continue
-            
-            results[info.uniqueName] = func(paths)
+                    continue
+                
+                yield results, info, pathsFile, analysisName, radiuses
+         
+        #pool.map(_doAnalysis, tasks())
+        map(_doAnalysis, tasks())
         
+        results = dict(results)
         with open(filePath, 'wb') as f:
             pickle.dump(results, f)
         
@@ -112,24 +125,30 @@ class BatchRun(object):
         
     def _getPathsFile(self, info):
         return self._makeFilePath("paths", info.uniqueName + ".paths")
-        
-    def _trackSeq(self, seq, override):
-        filePath = self._getPathsFile(seq.info)
-        if override and path.exists(filePath): return
-        
-        paths = processing.trackBacteria(seq)
-        with open(filePath, "wb") as f:
-            pickle.dump(paths, f)
             
     def _loadPaths(self, info):
         with open(self._getPathsFile(info), "rb") as f:
             return pickle.load(f)
+
+def _trackSeq(arguments):
+    info, filePath, override = arguments
     
+    if override and path.exists(filePath): return
+    
+    paths = processing.trackBacteria(images.ImageSeq(info))
+    with open(filePath, "wb") as f:
+        pickle.dump(paths, f)
+        
+def _doAnalysis(arguments):
+    results, info, pathsFile, func, radiuses = arguments
+    
+    with open(pathsFile, 'rb') as f: paths = pickle.load(f)
+    result = analysis.divideRadiuses(paths, ANALYSIS_FUNCTIONS[func], radiuses)
+    results[info.uniqueName] = result
+
 if __name__ == '__main__':
     batch = fromDensities()
-    #batch.track(override=False)
-    batch.overlay("directorVelocityCorrelation")
-    plt.show()
+    batch.track(override=True)
     for func in batch.funcs:
         batch.overlay(func)
         visual.saveCurrentPlot(func + ".png")

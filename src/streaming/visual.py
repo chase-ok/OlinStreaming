@@ -9,22 +9,25 @@ from matplotlib import animation
 from streaming import analysis
 import numpy as np
 
-def plot2DField(fields, show=True):
+def plot2DVectorFields(fields, show=True):
     def plotIndividual(field):
         p, v = field
-        return plt.quiver(p[:, 0], p[:, 1], v[:, 0], v[:, 1])
-    
+        plt.quiver(p[:, 0], p[:, 1], v[:, 0], v[:, 1])
+    return _plotAnimation(fields, plotIndividual, show=show)
+
+def plot2DFields(fields, show=True):
+    def plotIndividual(field):
+        (x, y), values = field
+        plt.pcolor(values, vmin=0.0, vmax=1.0)
+    return _plotAnimation(fields, plotIndividual, show=show)
+
+def _plotAnimation(collection, func, show=True):
     figure = plt.figure()
-    if isinstance(fields, list):
-        images = [(plotIndividual(f),) for f in fields]
-        plot = animation.ArtistAnimation(figure, images, 
-                                         interval=10, repeat=False)
-    else:
-        plot = plotIndividual(fields)
+    plot = animation.FuncAnimation(figure, func, collection, interval=5, repeat=False)
     
     if show: plt.show()
-    else: return plot
-    
+    return plot
+
 def plotCorrelation(correlation, 
                     clear=True, 
                     points=True, 

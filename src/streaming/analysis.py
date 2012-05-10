@@ -6,6 +6,8 @@ Created on Mar 24, 2012
 
 import numpy as np
 import math
+import copy
+from operator import itemgetter
 from processing import PathData, VelocityMatrix
 from utils import MatrixWrapper
 
@@ -32,6 +34,7 @@ class GriddedVelocityMatrix(VelocityMatrix):
 class GriddedPathData(PathData):
     
     def __init__(self, paths, numBins=(10, 10)):
+        self.numBins = numBins
         self.binSize = paths.info.imageSize/numBins
         
         self.cellMap = {}
@@ -48,16 +51,25 @@ class GriddedPathData(PathData):
         
     def makeCellData(self, func):
         return [func() for _ in range(len(self.cellMap))]
+    
+    def reshapeColumnAsGrid(self, col):
+        return np.array(col).reshape(self.numBins)
+    
+    @property
+    def cellCentersAsGrids(self):
+        return self.reshapeColumnAsGrid(self.cellCenters[:, 0]), \
+               self.reshapeColumnAsGrid(self.cellCenters[:, 1])
+    
 
-def _ensureGridded(paths):
+def _ensureGridded(paths, numBins=(12, 12), **others):
     if isinstance(paths, GriddedPathData):
         return paths
     else:
-        return GriddedPathData(paths)
+        return GriddedPathData(paths, numBins=numBins)
     
 
-def velocityField(paths):
-    paths = _ensureGridded(paths)
+def velocityField(paths, **binOptions):
+    paths = _ensureGridded(paths, **binOptions)
     
     def calculateFrame(matrix):
         velocities = paths.makeCellData(lambda: np.zeros(2))
@@ -73,13 +85,41 @@ def velocityField(paths):
             
     return _calculateByFrame(paths, calculateFrame)
 
+def localVelocityCorrelation(paths, **binOptions):
+    paths = _ensureGridded(paths, **binOptions)
+    
+    def calculateFrame(matrix):
+        velocities = paths.makeCellData(lambda: [])
+        
+        for row in range(matrix.shape[0]):
+            cell = int(matrix[row, "cell"])
+            velocities[cell].append(matrix[row, ("vx", "vy")])
+        
+        corr = map(_vectorCorrelation, velocities)
+        return paths.cellCentersAsGrids, paths.reshapeColumnAsGrid(corr)
+    
+    return _calculateByFrame(paths, calculateFrame)
+
 def particleDistance(paths, **radiusArgs):
     def calculateRadius(m, ref, inRange):
         return inRange.sum()
     
-    return Correlation("Particle Distance", paths,
+    return Correlation("Particle Distance", paths.info,
                        _byRadius(paths, calculateRadius, **radiusArgs))
 
+def _vectorCorrelation(vectors):
+    if len(vectors) == 0: return 0.0
+    if len(vectors) == 1: return 1.0
+    
+    ref = _toUnit(vectors[0])
+    corr = 0.0
+    for vector in vectors[1:]:
+        corr += np.dot(ref, _toUnit(vector))
+    
+    return corr/len(vectors)
+
+#we're not gonna use the _vectorCorrelation function here because the matrix
+#operations are much faster
 def velocityCorrelation(paths, **radiusArgs):
     def calculateRadius(m, ref, inRange):
         velocities = m[inRange, ("vx", "vy")]
@@ -94,7 +134,7 @@ def velocityCorrelation(paths, **radiusArgs):
         
         return corr/numRows
     
-    return Correlation("Velocity", paths,
+    return Correlation("Velocity", paths.info,
                        _byRadius(paths, calculateRadius, **radiusArgs))
 
 def directorCorrelation(paths, **radiusArgs):
@@ -111,7 +151,7 @@ def directorCorrelation(paths, **radiusArgs):
         
         return corr/angles.size
     
-    return Correlation("Director", paths,
+    return Correlation("Director", paths.info,
                        _byRadius(paths, calculateRadius, **radiusArgs))
 
 def directorVelocityCorrelation(paths, **radiusArgs):
@@ -128,13 +168,13 @@ def directorVelocityCorrelation(paths, **radiusArgs):
         
         return corr/numRows
     
-    return Correlation("Director-Velocity", paths,
+    return Correlation("Director-Velocity", paths.info,
                        _byRadius(paths, calculateRadius, **radiusArgs))
 
 class Correlation(object):
     
-    def __init__(self, name, paths, frames):
-        self.info = paths.info
+    def __init__(self, name, info, frames):
+        self.info = info
         self._frames = frames
         self.name = name
         
@@ -154,12 +194,42 @@ class Correlation(object):
         for xs, ys in self._frames:
             points.extend(zip(xs, ys))
         return points
+    
+    @property
+    def numFrames(self):
+        return len(self._frames)
+    
+    def copy(self):
+        return Correlation(self.name, self.info, copy.deepcopy(self._frames))
+    
+    def merge(self, other):
+        assert other.numFrames == self.numFrames
+        
+        newFrames = []
+        for selfFrame, otherFrame in zip(self._frames, other._frames):
+            selfXY = list(enumerate(zip(*selfFrame)))
+            otherXY = list(enumerate(zip(*otherFrame)))
+            
+            allXY = sorted(selfXY + otherXY, key=itemgetter(1))
+            newFrames.append(zip(*(point for _, point in allXY)))
+        
+        return Correlation()
+
+def mergeCorrelations(correlations):
+    base = correlations[0].copy()
+    for c in correlations[1:]: base.merge(c)
+    return base
 
 def meanOfCorrelations(correlations):
     mean = np.zeros_like(correlations[0].x)
     for c in correlations:
         mean += c.meanY
     return correlations[0].x, mean
+
+def divideRadiuses(paths, correlFunc, radiuses, n=2):
+    radiusSets = [radiuses[i:len(radiuses)-i:n] for i in range(n)]
+    correlations = [correlFunc(paths, radiuses=rs) for rs in radiusSets]
+    return mergeCorrelations(correlations)
 
 def _toUnit(vector):
     mag = np.linalg.norm(vector)
@@ -216,15 +286,16 @@ def _byRadius(paths, func,
     return _calculateByFrame(paths, calculateFrame)
 
 def _createCircleAreaFunc(width, height):
-    table = _constructClippingFuncTable(width, height)
+    table = _createClippingFuncTable(width, height)
     cache = {}
     
     def calculateArea(x, y, r):
-        roundedX, roundedY = 2*int(x/2), 2*int(y/2)
+        roundedX, roundedY = int(x), int(y)
         key = roundedX, roundedY, r
         try:
             return cache[key]
         except KeyError:
+            assert r < width/2 and r < height/2
             area = table[roundedX - r >= 0, 
                          roundedX + r <= width, 
                          roundedY - r >= 0, 
@@ -235,9 +306,9 @@ def _createCircleAreaFunc(width, height):
     return calculateArea
 
 
-def _constructClippingFuncTable(width, height):
+def _createClippingFuncTable(width, height):
     def noClipping(x, y, r): 
-        return r**2
+        return math.pi*r**2
     
     def singleSideClipping(transform):
         def func(x, y, r):
@@ -260,6 +331,8 @@ def _constructClippingFuncTable(width, height):
             else:
                 return x*math.sqrt(r2 - x2) + y*math.sqrt(r2 - y2) + \
                        r2*(math.asin(x/r) + math.asin(y/r))
+        
+        return func
     
     # (left, right, top, bottom)
     b = lambda s: tuple(c == "1" for c in s)
@@ -273,5 +346,5 @@ def _constructClippingFuncTable(width, height):
             b("1001"): cornerClipping(lambda x, y: (width - x, y)),
             b("1010"): cornerClipping(lambda x, y: (width - x, height - y))}
 
-    
+
     

@@ -25,7 +25,7 @@ class BatchRun(object):
     funcs = ANALYSIS_FUNCTIONS
     
     def __init__(self, infos, 
-                 outputFolder="../../output", 
+                 outputFolder="../output", 
                  minLength=50, 
                  poolSize=4):
         self.infos = infos
@@ -33,11 +33,10 @@ class BatchRun(object):
         self.minLength = 50
         self.poolSize = 4
     
-    def track(self, override=True):
+    def track(self, recalculate=False):
         pool = Pool(self.poolSize)
-        tasks = ((info, self._getPathsFile(info), override) 
-                  for info in self.infos)
-        pool.map(_trackSeq, tasks)
+        pool.map(_trackSeq, ((info, self._getPathsFile(info), recalculate) 
+                             for info in self.infos))
             
     def overlay(self, graph, **analysisOptions):
         results = self._performAnalysis(graph, **analysisOptions)
@@ -66,7 +65,51 @@ class BatchRun(object):
         else:
             raise ValueError("Unknown graph: %s." % graph)
         
-        visual.overlayMeanCorrelations(results, show=False, **options)      
+        visual.overlayMeanCorrelations(results, show=False, **options)
+
+    def dumpCorrelationToMatlab(self, correlation, fileName, **analysisOptions):
+        results = self._performAnalysis(correlation, **analysisOptions)
+        results = self._organizeByGroup(results)
+
+        from mlabwrap import mlab
+
+        groups = []
+        for group, correlations in results.iteritems():
+
+            wrapped = []
+            for i, data in enumerate(correlations):
+                info = _infoToMatlab(data.info, mlab)
+                points = np.array(data.points)
+                wrapped.append(mlab.struct("info", info, 
+                                           "points", points, 
+                                           "name", str(data.name)))
+
+            groups.append(mlab.struct("group", group, 
+                                      "correlations", _toStructArray(wrapped)))
+
+        mlab._set(correlation, _toStructArray(groups))
+        mlab.save(fileName, correlation)
+
+    def dumpPathsToMatlab(self, fileName, **trackOptions):
+        self.track(**trackOptions)
+
+        from mlabwrap import mlab
+
+        allPaths = []
+        for info in self.infos:
+            try:
+                paths = self._loadPaths(info)
+            except:
+                continue
+
+            print info.uniqueName
+
+            frames = _makeCells([v.array for v in paths.velocities], mlab)
+            allPaths.append(mlab.struct("info", _infoToMatlab(paths.info, mlab),
+                                        "frames", _wrapCellValue(frames)))
+        
+        mlab._set("paths", _toStructArray(allPaths))
+        mlab.save(fileName, "paths")
     
     def _performAnalysis(self, analysisName, 
                          recalculate=False, 
@@ -74,10 +117,9 @@ class BatchRun(object):
                          radiuses=np.arange(0.5, 15, 0.5)):
         filePath = self._makeFilePath("analysis", analysisName + ".cache")
         
-        #pool = Pool(self.poolSize)
-        #manager = Manager()
-        #results = manager.dict()
-        results = dict()
+        pool = Pool(self.poolSize)
+        manager = Manager()
+        results = manager.dict()
         
         if not recalculate and path.exists(filePath):
             with open(filePath, 'rb') as f:
@@ -100,8 +142,7 @@ class BatchRun(object):
                 
                 yield results, info, pathsFile, analysisName, radiuses
          
-        #pool.map(_doAnalysis, tasks())
-        map(_doAnalysis, tasks())
+        pool.map(_doAnalysis, tasks())
         
         results = dict(results)
         with open(filePath, 'wb') as f:
@@ -131,9 +172,9 @@ class BatchRun(object):
             return pickle.load(f)
 
 def _trackSeq(arguments):
-    info, filePath, override = arguments
+    info, filePath, recalculate = arguments
     
-    if override and path.exists(filePath): return
+    if not recalculate and path.exists(filePath): return
     
     paths = processing.trackBacteria(images.ImageSeq(info))
     with open(filePath, "wb") as f:
@@ -141,10 +182,43 @@ def _trackSeq(arguments):
         
 def _doAnalysis(arguments):
     results, info, pathsFile, func, radiuses = arguments
-    
+    print pathsFile, func
     with open(pathsFile, 'rb') as f: paths = pickle.load(f)
     result = analysis.divideRadiuses(paths, ANALYSIS_FUNCTIONS[func], radiuses)
     results[info.uniqueName] = result
+
+def _toStructArray(structs):
+    array = None
+    for i, struct in enumerate(structs):
+        if array is None:
+            array = struct
+        else:
+            array[i] = struct
+    return array
+
+def _infoToMatlab(info, connection):
+    pairs = []
+    for name, value in info.attributes.iteritems():
+        if isinstance(value, unicode):
+            value = str(value)
+        pairs.extend([name, value])
+    
+    return connection.struct(*pairs)
+
+def _makeCells(items, connection, blockSize=64):
+    connection._set("makeCells", connection._do("@(varargin) varargin", nout=1))
+    connection._set("joinCells", connection._do("@(c1, c2) [c1, c2]", nout=1))
+
+    cells = connection.makeCells(*items[0:blockSize], nout=1)
+    for offset in range(blockSize, len(items), blockSize):
+        nextBlock = connection.makeCells(*items[offset:offset+blockSize], nout=1)
+        cells = connection.joinCells(cells, nextBlock, nout=1)
+
+    return cells
+
+def _wrapCellValue(value, connection):
+    connection._set("wrapValue", connection._do("@(v) {v}", nout=1))
+    return connection.wrapValue(value, nout=1)
 
 if __name__ == '__main__':
     batch = fromDensities()

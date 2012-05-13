@@ -73,7 +73,7 @@ def overlayMeanCorrelations(groupedCorrelations,
                             **options)
         
         x, mean = analysis.meanOfCorrelations(correlations)
-        plt.plot(x, mean, line, linewidth=3, label=group)
+        plt.plot(x, mean, line, linewidth=4, label=group)
         _applyOptions(options)
     
     plt.legend()

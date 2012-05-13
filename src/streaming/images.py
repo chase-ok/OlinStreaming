@@ -119,6 +119,10 @@ class ImageSeqInfo(object):
         numDigits = len(str(self.length - 1))
         imageNums = (str(i).zfill(numDigits) for i in range(self.length))
         return [imagePath(num) for num in imageNums]
+
+    @property
+    def attributes(self):
+        return self.__dict__
     
     def __str__(self):
         return "{0} in {1}: {2} images (channel {3})"\
@@ -126,7 +130,7 @@ class ImageSeqInfo(object):
                        self.channel)
         
     def __repr__(self):
-        return "ImageSeqInfo(" + repr(self.__dict__) + ")"
+        return "ImageSeqInfo(" + repr(self.attributes) + ")"
     
     @property
     def uniqueName(self):

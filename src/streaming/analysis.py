@@ -213,7 +213,7 @@ class Correlation(object):
             allXY = sorted(selfXY + otherXY, key=itemgetter(1))
             newFrames.append(zip(*(point for _, point in allXY)))
         
-        return Correlation()
+        return Correlation(self.name, self.info, newFrames)
 
 def mergeCorrelations(correlations):
     base = correlations[0].copy()
@@ -221,15 +221,28 @@ def mergeCorrelations(correlations):
     return base
 
 def meanOfCorrelations(correlations):
-    mean = np.zeros_like(correlations[0].x)
+    sums = np.zeros_like(correlations[0].x)
     for c in correlations:
-        mean += c.meanY
-    return correlations[0].x, mean
+        sums += c.meanY
+    return correlations[0].x, sums/len(correlations)
 
 def divideRadiuses(paths, correlFunc, radiuses, n=2):
     radiusSets = [radiuses[i:len(radiuses)-i:n] for i in range(n)]
     correlations = [correlFunc(paths, radiuses=rs) for rs in radiusSets]
     return mergeCorrelations(correlations)
+    
+def meanDensity(paths):
+    area = paths.info.imageSize.prod()
+    numFrames = float(len(paths.velocities))
+    return (sum(m.shape[0] for m in paths.velocities)/area)/numFrames
+    
+def meanSpeed(paths):
+    speed = 0.0
+    for vel in paths.velocities:
+        # axis=1 -> sum along rows
+        speeds = np.sqrt((vel[:, ("vx", "vy")]**2).sum(axis=1))
+        speed += speeds.sum()/len(speeds)
+    return speed
 
 def _toUnit(vector):
     mag = np.linalg.norm(vector)

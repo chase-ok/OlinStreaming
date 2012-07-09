@@ -33,6 +33,10 @@ class MatrixWrapper(object):
         
     @property
     def shape(self):
+        return self._count, self._numCols
+
+    @property
+    def _memoryShape(self):
         return self._numRows, self._numCols
         
     def append(self, *data):
@@ -43,11 +47,11 @@ class MatrixWrapper(object):
         
         if self._count >= self._numRows:
             self._numRows *= 2
-            self.array.resize(self.shape)
+            self.array.resize(self._memoryShape)
             
     def compact(self):
         self._numRows = self._count
-        self.array.resize(self.shape)
+        self.array.resize(self._memoryShape)
         
     def selectColumns(self, *columns):
         newArray = np.empty((self._numRows, len(columns)), dtype='float')

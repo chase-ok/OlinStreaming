@@ -46,7 +46,7 @@ class BatchRun(object):
             options = dict(title="Distance Correlation",
                            xlabel="Distance [microns]",
                            ylabel="# Particles [microns^-2]",
-                           ylim=(0, 0.4))
+                           ylim=(0, 0.15))
         elif graph == "velocityCorrelation":
             options = dict(title="Velocity Correlation",
                            xlabel="Distance [microns]",
